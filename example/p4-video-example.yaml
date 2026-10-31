@@ -1,0 +1,148 @@
+# Minimal example: Waveshare ESP32-P4-WIFI6-Touch-LCD-X 10.1" (landscape) — a button opens a full-screen
+# video layer, touching the video closes it. Replace YOUR_SERVER with the address of your MJPEG source.
+esphome:
+  name: p4-video
+  min_version: 2026.9.0
+  on_boot:
+    priority: -100
+    then:
+      - lambda: 'id(video).set_image(id(img_video));'
+
+esp32:
+  variant: esp32p4
+  cpu_frequency: 360MHz
+  flash_size: 32MB
+  framework:
+    type: esp-idf
+    advanced:
+      execute_from_psram: true
+      enable_idf_experimental_features: true
+
+psram:
+  mode: hex
+  speed: 200MHz
+
+esp_ldo:
+  - channel: 3
+    voltage: 2.5V
+
+esp32_hosted:
+  variant: esp32c6
+  reset_pin: GPIO54
+  cmd_pin: GPIO19
+  clk_pin: GPIO18
+  d0_pin: GPIO14
+  d1_pin: GPIO15
+  d2_pin: GPIO16
+  d3_pin: GPIO17
+  active_high: true
+  sdio_frequency: 40MHz
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+api:
+ota:
+  - platform: esphome
+
+i2c:
+  - id: touch_bus
+    sda: GPIO7
+    scl: GPIO8
+    frequency: 400kHz
+
+display:
+  - platform: mipi_dsi
+    id: my_display
+    model: WAVESHARE-P4-NANO-10.1
+    reset_pin: GPIO27
+    dimensions: {width: 800, height: 1280}
+    update_interval: never
+    auto_clear_enabled: false
+
+touchscreen:
+  - platform: gt911
+    id: ts_touch
+    display: my_display
+    i2c_id: touch_bus
+
+output:
+  - platform: ledc
+    id: backlight_pwm
+    pin: GPIO26
+    frequency: 20000Hz
+
+light:
+  - platform: monochromatic
+    id: backlight
+    output: backlight_pwm
+    restore_mode: ALWAYS_ON
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/65cfnrx4vy-dotcom/esphome-p4-mjpeg-video
+    components: [mjpeg_video]
+
+mjpeg_video:
+  id: video
+  width: 1280
+  height: 720
+  display: my_display
+  rotation: 270          # same as lvgl rotation below
+
+lvgl:
+  displays: my_display
+  touchscreens: ts_touch
+  rotation: 270
+  pages:
+    - id: main_page
+      widgets:
+        - button:
+            align: CENTER
+            width: 300
+            height: 100
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "Camera"
+            on_click:
+              - lvgl.widget.show: video_layer
+              - lambda: |-
+                  id(video).set_rect(0, 40, 1280, 720);
+                  id(video).start("http://YOUR_SERVER/stream.mjpeg");
+        # the video layer: full screen, opaque, a direct child of the page
+        - obj:
+            id: video_layer
+            x: 0
+            y: 0
+            width: 1280
+            height: 800
+            radius: 0
+            border_width: 0
+            pad_all: 0
+            bg_color: 0x000000
+            bg_opa: COVER
+            hidden: true
+            on_click:
+              - lvgl.widget.hide: video_layer
+              - lambda: 'id(video).stop();'
+            widgets:
+              - image:
+                  id: img_video
+                  src: placeholder
+                  align: CENTER
+                  clickable: false
+              - label:
+                  x: 24
+                  y: 8
+                  text: "Touch to close"
+                  text_color: 0xFFFFFF
+
+image:
+  - id: placeholder
+    file: mdi:cctv
+    type: BINARY
+    resize: 64x64
