@@ -1,0 +1,13 @@
+# go2rtc streams for the Reolink intercom (standalone go2rtc, or the `go2rtc:` section of Frigate's config).
+# Use your doorbell's own user/password (Frigate supports {FRIGATE_...} environment variables, keep them out of
+# the file). Tested with a Reolink Video Doorbell WiFi D340W (dual-band); its RTSP backchannel is PCMU/8000.
+streams:
+  # talk target: go2rtc plays the panel's voice into this stream's backchannel (the doorbell speaker)
+  doorbell:
+    - rtsp://USER:PASSWORD@DOORBELL_IP:554/Preview_01_sub
+  # listen + video: #backchannel=0 so listening never claims the backchannel and talking keeps working
+  doorbell_listen:
+    - rtsp://USER:PASSWORD@DOORBELL_IP:554/Preview_01_sub#backchannel=0
+  # the server's ffmpeg publishes the panel microphone here (RTSP publish); go2rtc needs the name to exist
+  panel_talk:
+    - rtsp://127.0.0.1:8554/panel_talk_in

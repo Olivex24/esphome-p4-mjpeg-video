@@ -74,6 +74,8 @@ id(video).stop();
 
 A complete minimal example is in [`example/p4-video-example.yaml`](example/p4-video-example.yaml).
 
+**Video intercom with a Reolink doorbell** (live video + Listen + Hold to talk, through go2rtc): see [`example/reolink-intercom`](example/reolink-intercom).
+
 ## How the direct path coexists with LVGL
 
 The video is written into the frame buffer behind LVGL's back. To keep LVGL from painting over it:
