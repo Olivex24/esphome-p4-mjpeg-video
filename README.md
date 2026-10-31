@@ -42,7 +42,7 @@ Every step below was driven by numbers the component logs every 5 s (`received /
 external_components:
   - source:
       type: git
-      url: https://github.com/65cfnrx4vy-dotcom/esphome-p4-mjpeg-video
+      url: https://github.com/Olivex24/esphome-p4-mjpeg-video
     components: [mjpeg_video]
 
 mjpeg_video:
