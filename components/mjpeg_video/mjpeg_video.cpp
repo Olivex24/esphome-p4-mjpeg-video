@@ -104,6 +104,9 @@ void MjpegVideo::start(const std::string &url, bool repeat) {
   if (d) {
     this->hide_siblings_();
     lv_obj_invalidate(lv_obj_get_parent(this->img_));   // repaint the (black) layer: no leftovers if the rect changed
+    // let LVGL finish that repaint NOW, before the video task can draw: a small still JPEG can arrive within a few ms
+    // and would otherwise be painted over by LVGL's black layer a moment later
+    lv_refr_now(nullptr);
   }
   this->direct_.store(d);
   this->gen_.fetch_add(1);
@@ -336,11 +339,12 @@ void MjpegVideo::decode_(size_t len) {
   jpeg_decode_picture_info_t info;
   if (jpeg_decoder_get_info(this->in_, len, &info) != ESP_OK)
     return;
-  // any size up to the configured one; width must be a multiple of 16
+  // any size up to the configured one. Width must be a multiple of 32: the hardware decoder aligns each RGB565 row to
+  // 64 bytes, so e.g. 528 or 1072 px wide frames come out sheared (diagonal stripes)
   uint32_t hp = (info.height + 15) & ~15u;
-  if ((int) info.width > this->w_ || info.width % 16 != 0 || (size_t) info.width * hp * 2 > this->out_size_) {
+  if ((int) info.width > this->w_ || info.width % 32 != 0 || (size_t) info.width * hp * 2 > this->out_size_) {
     if (!this->warned_size_) {
-      ESP_LOGW(TAG, "Frame %ux%u does not fit %dx%d (or width not a multiple of 16) — skipping", (unsigned) info.width,
+      ESP_LOGW(TAG, "Frame %ux%u does not fit %dx%d (or width not a multiple of 32) — skipping", (unsigned) info.width,
                (unsigned) info.height, this->w_, this->h_);
       this->warned_size_ = true;
     }

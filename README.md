@@ -27,7 +27,7 @@ Every step below was driven by numbers the component logs every 5 s (`received /
 2. **The main loop was the bottleneck, not the network.** Frames arrived at 12 fps, but only 3–11 were shown: the image could only be swapped from ESPHome's main loop, and that loop was busy. ESPHome's own "took a long time" warnings pointed at `online_image`: grid thumbnails hidden *behind* the video were still being downloaded and decoded in software, 300–650 ms each. Pausing them while video is open: 55–59 of 60 frames shown at 800×448.
 3. **LVGL itself caps out at ~6 fps for 1280×720.** Even with an idle loop, drawing a full-size frame (software blend + rotation + copy to the panel) costs ~150 ms. LVGL's PPA draw unit exists but ESPHome keeps it disabled for stability, and we did not want to change that for the whole UI.
 4. **So the video skips LVGL.** The decoded frame goes through the **PPA** (the P4's 2D accelerator) which rotates/scales it in hardware and writes it directly into the MIPI-DSI frame buffer, from the video task. The LVGL page underneath is hidden while video runs so nothing repaints over it. Result: **every frame drawn, 16–27 fps at 1280×720**, ~43 ms of hardware time per frame and almost zero CPU.
-5. **The server matters too.** Two ffmpeg/Python details cost us hours (see *Serving the stream* below): a buffered `read()` that delivered frames in bursts, and a missing `-fps_mode passthrough` that made ffmpeg repeat one frame forever.
+5. **The server matters too.** A few ffmpeg/Python details cost us hours (see *Serving the stream* below): a buffered `read()` that delivered frames in bursts, a missing `-fps_mode passthrough` that made ffmpeg repeat one frame forever, and a queue on the server that turned a slow Wi-Fi link into slow motion.
 
 ## Measured (Waveshare 10.1", LVGL rotation 270, ESP-IDF 5.5, ESPHome 2026.10)
 
@@ -47,7 +47,7 @@ external_components:
 
 mjpeg_video:
   id: video
-  width: 1280          # largest frame accepted (width must be a multiple of 16)
+  width: 1280          # largest frame accepted (frame width must be a multiple of 32)
   height: 720
   display: my_display  # your mipi_dsi display → enables the direct (hardware) path
   rotation: 270        # must match `lvgl: rotation:`
@@ -87,7 +87,7 @@ The video is written into the frame buffer behind LVGL's back. To keep LVGL from
 
 ## Serving the stream
 
-Any HTTP response containing back-to-back JPEGs works (frames are found by their SOI/EOI markers, `multipart/x-mixed-replace` or raw). The JPEG width must be a multiple of 16. Example with ffmpeg from an RTSP source (e.g. go2rtc/Frigate):
+Any HTTP response containing back-to-back JPEGs works (frames are found by their SOI/EOI markers, `multipart/x-mixed-replace` or raw). The JPEG width must be a **multiple of 32**. Example with ffmpeg from an RTSP source (e.g. go2rtc/Frigate):
 
 ```sh
 ffmpeg -fflags nobuffer -flags low_delay -rtsp_transport tcp -i rtsp://YOUR_RTSP_SOURCE \
@@ -95,10 +95,12 @@ ffmpeg -fflags nobuffer -flags low_delay -rtsp_transport tcp -i rtsp://YOUR_RTSP
   -fps_mode passthrough -q:v 7 -f mjpeg -
 ```
 
-Two lessons learned the hard way:
+Lessons learned the hard way:
 
 - **`-fps_mode passthrough`** — without it (and without an `fps` filter) ffmpeg kept repeating the *first* frame forever (245 identical frames in 4 s): the screen froze although the P4 was drawing 27 fps.
 - When piping ffmpeg's output through Python, use `stdout.read1()`, not `read(16384)`: the latter waits until 2–3 small frames pile up → stutter and delay.
+- **Send only the newest frame.** If the panel's Wi-Fi cannot keep up with a high-bitrate camera (one of ours: ~79 KB × 20 fps ≈ 12.6 Mbps), a plain pipe lets 0.5–0.7 MB queue up on the server: the video plays in slow motion and the delay keeps growing. Keep one "latest frame" slot that a reader thread overwrites, write from it, and shrink the socket send buffer (`SO_SNDBUF` 32 KB) — then a slow link only lowers the frame rate and the picture stays real-time. `example/reolink-intercom/intercom_server.py` does exactly this.
+- **Frame width must be a multiple of 32**, not just 16: the P4 hardware decoder aligns each RGB565 row to 64 bytes, so 528- or 1072-pixel-wide frames come out sheared into diagonal stripes.
 
 Wrap it in a tiny HTTP server (or use go2rtc's own MJPEG endpoint). Keep it on your local network and allow only the panel to connect.
 

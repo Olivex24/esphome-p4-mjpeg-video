@@ -157,12 +157,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Type", "video/x-motion-jpeg")
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
-            while True:
-                b = p.stdout.read1(65536)   # read1: forward each frame as soon as it exists (read(n) batches them)
-                if not b:
-                    break
-                self.wfile.write(b)
-                self.wfile.flush()
+            send_newest_frame(self, p)
         except (BrokenPipeError, ConnectionResetError):
             pass
         finally:
@@ -170,6 +165,55 @@ class Handler(http.server.BaseHTTPRequestHandler):
             p.wait()
             kill_tagged(tag)
             ONE_VIDEO.release()
+
+
+def send_newest_frame(handler, p):
+    """MJPEG to the panel without a queue: a reader thread keeps ONLY the newest frame. If the panel's Wi-Fi is slower
+    than the camera, older frames are dropped (lower frame rate, but always real-time) instead of piling up on the
+    server (which looked like slow motion with an ever-growing delay)."""
+    try:   # small send buffer, otherwise the kernel itself queues hundreds of KB
+        handler.connection.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 32 * 1024)
+    except OSError:
+        pass
+    newest = [None]
+    lock = threading.Lock()
+    ready = threading.Event()
+    ended = [False]
+
+    def reader():
+        buf = b""
+        while True:
+            d = p.stdout.read1(65536)   # read1: take whatever ffmpeg has produced (read(n) would wait for n bytes)
+            if not d:
+                break
+            buf += d
+            while True:
+                a = buf.find(b"\xff\xd8")
+                if a < 0:
+                    buf = buf[-1:]
+                    break
+                b = buf.find(b"\xff\xd9", a + 2)
+                if b < 0:
+                    buf = buf[a:]
+                    break
+                with lock:
+                    newest[0] = buf[a:b + 2]   # replaces a frame that was not sent yet
+                buf = buf[b + 2:]
+                ready.set()
+        ended[0] = True
+        ready.set()
+
+    threading.Thread(target=reader, daemon=True).start()
+    while True:
+        ready.wait(10)
+        ready.clear()
+        with lock:
+            frame, newest[0] = newest[0], None
+        if frame:
+            handler.wfile.write(frame)
+            handler.wfile.flush()
+        if ended[0] and newest[0] is None:
+            break
 
 
 class Talk:

@@ -33,7 +33,12 @@ class MjpegVideo : public Component {
  public:
   void set_size(int w, int h) { this->w_ = w; this->h_ = h; }
   void set_bgr(bool b) { this->bgr_ = b; }
-  void set_image(lv_obj_t *img) { this->img_ = img; }
+  /// image (and its layer) to draw on; switching layers (e.g. cameras <-> photo viewer) restores the old page first
+  void set_image(lv_obj_t *img) {
+    if (img != this->img_ && this->siblings_hidden_)
+      this->stop();
+    this->img_ = img;
+  }
   void set_display(display::Display *d) { this->disp_ = d; }
   /// rotation configured for LVGL (0/90/180/270, clockwise) — the direct path must rotate the same way
   void set_rotation(int r) { this->rotation_ = r; }
